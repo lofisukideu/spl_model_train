@@ -2,7 +2,7 @@ import torch
 import torch.optim as optim
 import torch.nn as nn
 from collections import Counter
-from model import OptimizedCNN
+from model import LighterCNN
 from data_preprocessing import load_data
 from utils import calculate_accuracy, save_model
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -15,14 +15,17 @@ print(f"Using device: {device}")
 train_loader, test_loader, val_loader = load_data(batch_size=64)
 
 # 模型初始化
-model = OptimizedCNN().to(device)
+model = LighterCNN().to(device)
 
 # 定义损失函数和优化器
 criterion = torch.nn.CrossEntropyLoss()
 optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
 
 # 学习率调度器：当验证集精度没有提升时，降低学习率
-scheduler = ReduceLROnPlateau(optimizer, 'max', patience=2, factor=0.5, min_lr=1e-6)
+# scheduler = ReduceLROnPlateau(optimizer, 'max', patience=2, factor=0.5, min_lr=1e-6)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)  # 训练 5 轮后降低学习率
+
+num_epochs = 15  # 训练足够轮次
 
 # 训练模型
 def train_model():
@@ -74,7 +77,7 @@ def train_model():
             break
 
         # 使用学习率调度器调整学习率
-        scheduler.step(val_acc)
+        scheduler.step()
         # 打印当前学习率
         print(f"Learning rate: {scheduler.get_last_lr()[0]:.6f}")
         

@@ -1,19 +1,19 @@
 import torch
 import torch.nn.functional as F
 from torchvision import transforms
-from PIL import Image
+from PIL import Image, ImageEnhance
 import numpy as np
 import matplotlib.pyplot as plt
-from model import OptimizedCNN  # 确保该模型类路径正确
+from model import LighterCNN  # 确保该模型类路径正确
 import os
-import time  # ✅ 需要导入 time 模块
+import time
 
 # 设备选择 (使用 GPU 加速)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # **加载训练好的模型**
 def load_model(model_path='best_model.pth'):
-    model = OptimizedCNN().to(device)  # 载入模型并移动到设备
+    model = LighterCNN().to(device)  # 载入模型并移动到设备
     try:
         checkpoint = torch.load(model_path, map_location=device)  # 适配 CPU/GPU
         model.load_state_dict(checkpoint, strict=False)  # 允许部分参数不匹配
@@ -27,20 +27,27 @@ def load_model(model_path='best_model.pth'):
 # **图像预处理**
 def preprocess_image(image_path):
     img = Image.open(image_path).convert('L')  # 转为灰度
-
+    
+    img = img.resize((28, 28), Image.BILINEAR)  # 调整尺寸
+    
+    enhancer = ImageEnhance.Contrast(img)
+    
+    enhanced_img = enhancer.enhance(factor=2.0)
+    
     # **优化缩放方式，避免失真**
     transform = transforms.Compose([
-        transforms.Resize((28, 28)),  # 直接缩放，保证输入尺寸一致
         transforms.CenterCrop(28),  # 避免比例失真
         transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,))  # 归一化
     ])
 
-    img_tensor = transform(img).unsqueeze(0).to(device)  # 转换为 Tensor，并移动到设备
+    img_tensor = transform(enhanced_img).unsqueeze(0).to(device)  # 转换为 Tensor，并移动到设备
     return img_tensor
 
 # **进行预测，并返回 Softmax 置信度**
 def predict_with_confidence(model, img_tensor):
+    model.eval()
+    
     with torch.no_grad():  # 关闭梯度计算，提高推理速度
         output = model(img_tensor)  
         probabilities = F.softmax(output, dim=1)  # 计算 softmax 概率
