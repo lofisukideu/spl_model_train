@@ -4,89 +4,122 @@ from torchvision import transforms
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
-from model import OptimizedCNN  # 你定义的CNN模型类，确保此路径正确
+from model import OptimizedCNN  # 确保该模型类路径正确
+import os
+import time  # ✅ 需要导入 time 模块
 
-# 加载训练好的模型
+# 设备选择 (使用 GPU 加速)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# **加载训练好的模型**
 def load_model(model_path='best_model.pth'):
-    model = OptimizedCNN()  # 初始化模型
-    checkpoint = torch.load(model_path)  # 加载模型参数
-    model.load_state_dict(checkpoint, strict=False)  # 使用 strict=False 忽略不匹配的层
-    model.eval()  # 设置为评估模式
+    model = OptimizedCNN().to(device)  # 载入模型并移动到设备
+    try:
+        checkpoint = torch.load(model_path, map_location=device)  # 适配 CPU/GPU
+        model.load_state_dict(checkpoint, strict=False)  # 允许部分参数不匹配
+        model.eval()  # 设置为评估模式
+        print("✅ 模型加载成功！")
+    except Exception as e:
+        print(f"❌ 发生错误: {e}\n请检查模型路径是否正确！")
+        exit()
     return model
 
-# 图像预处理：将图像转换为与训练时一致的格式
+# **图像预处理**
 def preprocess_image(image_path):
-    # 打开图片并转为灰度图
-    img = Image.open(image_path).convert('L')  
-    # 将图片大小调整为28x28（MNIST数据集的标准尺寸）
-    img = img.resize((28, 28))
+    img = Image.open(image_path).convert('L')  # 转为灰度
 
-    # 使用 transforms 进行预处理：转换为Tensor并归一化
+    # **优化缩放方式，避免失真**
     transform = transforms.Compose([
+        transforms.Resize((28, 28)),  # 直接缩放，保证输入尺寸一致
+        transforms.CenterCrop(28),  # 避免比例失真
         transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,))  # 与训练时使用的标准化一致
+        transforms.Normalize((0.1307,), (0.3081,))  # 归一化
     ])
 
-    img_tensor = transform(img)  # 将图像转换为Tensor
-    img_tensor = img_tensor.unsqueeze(0)  # 添加一个batch维度
-    print(f"预处理后的图像形状: {img_tensor.shape}")  # 打印图像形状
+    img_tensor = transform(img).unsqueeze(0).to(device)  # 转换为 Tensor，并移动到设备
     return img_tensor
 
-# 使用模型进行数字预测
-def predict(model, img_tensor):
-    with torch.no_grad():  # 不需要计算梯度，节省内存
-        output = model(img_tensor)  # 获取模型输出
-        _, predicted_class = torch.max(output, 1)  # 获取最大概率的类别
-    return predicted_class.item()  # 返回预测的数字类别
-
-# 假设 model 是已训练好的模型，img_tensor 是输入图像的 Tensor
+# **进行预测，并返回 Softmax 置信度**
 def predict_with_confidence(model, img_tensor):
-    with torch.no_grad():  # 不计算梯度，节省内存
-        output = model(img_tensor)  # 获取模型输出
-        # 使用 softmax 将输出转换为概率分布
-        probabilities = F.softmax(output, dim=1)
-        
-        # 获取最大概率的类别和信任值（即概率值）
-        predicted_class = torch.argmax(probabilities, dim=1)
-        confidence = probabilities[0][predicted_class].item()  # 最大概率（信任度）
+    with torch.no_grad():  # 关闭梯度计算，提高推理速度
+        output = model(img_tensor)  
+        probabilities = F.softmax(output, dim=1)  # 计算 softmax 概率
 
-        # 获取每个类别的信任度（概率值）
-        class_confidences = probabilities.squeeze().tolist()  # 转为 list 形式
-        
-    return predicted_class.item(), confidence, class_confidences  # 返回预测类别、信任度和所有类别的信任度
+        predicted_class = torch.argmax(probabilities, dim=1).item()  # 获取最大概率的类别
+        confidence = probabilities[0][predicted_class].item()  # 最大类别的置信度
+        class_confidences = probabilities.squeeze().cpu().tolist()  # 转为 Python 列表
+    return predicted_class, confidence, class_confidences
 
-# 可视化输入图像
+# **显示输入图像**
 def show_image(image_path):
     img = Image.open(image_path).convert('L')  # 打开并转为灰度图
     img = img.resize((28, 28))  # 调整尺寸
     plt.imshow(np.array(img), cmap='gray')  # 显示图像
-    plt.axis('off')  # 关闭坐标轴
+    plt.axis("off")  
+    plt.title("输入图片")
     plt.show()
 
+# **显示 Softmax 置信度分布**
+def show_confidence_distribution(class_confidences, predicted_class):
+    plt.bar(range(10), class_confidences, color=['blue' if i != predicted_class else 'red' for i in range(10)])
+    plt.xticks(range(10))
+    plt.xlabel("类别")
+    plt.ylabel("置信度")
+    plt.title("Softmax 置信度分布")
+    plt.show()
+    
+# **✅ 保存预测的图片**
+def save_prediction_image(image_path, predicted_digit, output_dir="output"):
+    os.makedirs(output_dir, exist_ok=True)  # 创建目录（如果不存在）
+    
+    # 读取并调整图片
+    img = Image.open(image_path).convert('L').resize((28, 28))
+    
+    # 生成唯一文件名（防止覆盖）
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    save_path = os.path.join(output_dir, f"pred_{predicted_digit}_{timestamp}.png")
+    
+    img.save(save_path)
+    print(f"✅ 预测的图片已保存: {save_path}")
+
+# **主循环**
 def main():
-    # 输入手写数字图像路径
-    image_path = input("请输入手写数字图片的路径: ")
+    model = load_model()  # 加载训练好的模型
+    print("\n✅ 模型加载完成，输入图片路径开始预测，输入 'exit' 退出程序。")
 
-    # 加载训练好的模型
-    model = load_model()
+    while True:
+        # 获取用户输入的图片路径
+        image_path = input("\n📷 请输入手写数字图片的路径 (输入 'exit' 退出)： ")
+        if image_path.lower() == 'exit':
+            print("👋 程序已退出。")
+            break
 
-    # 图像预处理
-    img_tensor = preprocess_image(image_path)
+        # **检查路径是否存在**
+        if not os.path.exists(image_path):
+            print(f"❌ 错误: 文件 '{image_path}' 不存在，请检查路径！")
+            continue
 
-    # 进行预测
-    # predicted_digit = predict(model, img_tensor)
-    
-    predicted_digit, confidence, class_confidences = predict_with_confidence(model, img_tensor)
-    
-    print(f"预测的数字是: {predicted_digit}, 置信度: {confidence:.2f}")
-    
-    # 输出每个类别的信任度
-    for i, class_confidence in enumerate(class_confidences):
-        print(f"类别 {i}: 信任度 {class_confidence * 100:.2f}%")
+        try:
+            # 处理图像
+            img_tensor = preprocess_image(image_path)
 
-    # 显示输入图像和预测结果
-    show_image(image_path)
-    # print(f"预测的数字是: {predicted_digit}")
+            # 进行预测
+            predicted_digit, confidence, class_confidences = predict_with_confidence(model, img_tensor)
+
+            # 输出预测结果
+            print(f"\n🎯 预测的数字是: {predicted_digit}，置信度: {confidence:.2f}")
+            for i, class_confidence in enumerate(class_confidences):
+                print(f"类别 {i}: {class_confidence * 100:.2f}%")
+
+            # **显示输入图像和 Softmax 置信度分布**
+            show_image(image_path)
+            show_confidence_distribution(class_confidences, predicted_digit)
+
+            # **✅ 保存当前输入图片，并带预测标签**
+            save_prediction_image(image_path, predicted_digit)
+
+        except Exception as e:
+            print(f"❌ 发生错误: {e}\n请检查图片格式是否正确！")
 
 if __name__ == "__main__":
     main()
