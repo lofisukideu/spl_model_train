@@ -14,7 +14,7 @@ model = OptimizedCNN()
 
 # 定义损失函数和优化器
 criterion = torch.nn.CrossEntropyLoss()
-optimizer = optim.AdamW(model.parameters(), lr=0.001)
+optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
 
 # 学习率调度器：当验证集精度没有提升时，降低学习率
 scheduler = ReduceLROnPlateau(optimizer, 'max', patience=2, factor=0.5)
